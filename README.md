@@ -19,10 +19,6 @@ npm run build
 
 Review the generated JSON before committing. The dashboard build reads the JSON artifacts and does not need the original CSVs in GitHub or on Vercel. It also refreshes `contact_enrichment/output/csaf_email_handoff.csv` from the local contact discovery file.
 
-## Deploy on Vercel
-
-Connect the private GitHub repository and set the Vercel project root to `web`. Use `npm run build` as the build command. The current dashboard is a static export and requires no runtime database for its read-only pages. New dashboard data is published by regenerating the JSON locally and redeploying.
-
 ## Local development
 
 ```bash
@@ -32,7 +28,3 @@ npm run dev
 ```
 
 `web/next.config.ts` allows the LAN origin used for development at the time of setup. If the development machine's LAN IP changes, update `allowedDevOrigins` and restart the dev server. This setting applies only to development resources.
-
-## Local contact-enrichment pilot
-
-The `contact_enrichment/` directory contains the pilot script and instructions. Its CSV output and downloaded indexes are ignored by Git. The script records only addresses found on official organization pages, along with source URLs and retrieval dates; it does not guess addresses or send messages.

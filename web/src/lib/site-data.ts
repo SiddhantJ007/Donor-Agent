@@ -11,25 +11,28 @@ export type PublishedContact = {
   evidenceUrl: string;
   retrievedOn: string;
   status: string;
+  sharedOrganizationCount: number;
 };
 
 export type ContactHandoffRow = {
-  organization_best_rank: string | number;
-  ein: string;
-  organization_name: string;
-  city: string;
-  state: string;
-  ntee_code: string;
-  total_revenue: string | number;
-  tax_period_count: string | number;
-  tier_name: string;
-  organization_score: string | number;
-  contact_name: string;
-  contact_type: string;
   email_address: string;
-  official_website: string;
-  organization_phone: string;
-  evidence_url: string;
+  primary_organization_best_rank: string | number;
+  primary_ein: string;
+  primary_organization_name: string;
+  primary_city: string;
+  primary_state: string;
+  primary_ntee_code: string;
+  primary_total_revenue: string | number;
+  primary_tax_period_count: string | number;
+  primary_tier_name: string;
+  primary_organization_score: string | number;
+  associated_organization_count: number;
+  associated_organizations: string;
+  contact_names: string;
+  contact_types: string;
+  official_websites: string;
+  organization_phones: string;
+  evidence_urls: string;
   retrieved_on: string;
   email_status: string;
 };
@@ -87,7 +90,14 @@ export type SiteSummary = {
   artifacts: Record<string, { rows: number; columns: number; file: string }>;
   peoplePrivacy: string;
   publishedEmails: number;
+  emailOrganizationAssociations: number;
+  sharedEmailAddresses: number;
   organizationsWithPublishedEmails: number;
+  contactOrganizationsChecked: number;
+  contactOrganizationsWithEmail: number;
+  contactSiteCheckedNoEmail: number;
+  contactNeedsRetry: number;
+  contactRetrievedAt: string;
   matchedProspectEmails: number;
   organizationInboxes: number;
 };
@@ -98,17 +108,17 @@ export const emailHandoff = contactHandoff as ContactHandoffRow[];
 
 export function downloadEmailHandoff() {
   const columns: (keyof ContactHandoffRow)[] = [
-    "organization_best_rank", "ein", "organization_name", "city", "state", "ntee_code",
-    "total_revenue", "tax_period_count", "tier_name", "organization_score", "contact_name",
-    "contact_type", "email_address", "official_website", "organization_phone", "evidence_url",
-    "retrieved_on", "email_status",
+    "email_address", "primary_organization_best_rank", "primary_ein", "primary_organization_name",
+    "primary_city", "primary_state", "primary_ntee_code", "primary_total_revenue", "primary_tax_period_count",
+    "primary_tier_name", "primary_organization_score", "associated_organization_count", "associated_organizations",
+    "contact_names", "contact_types", "official_websites", "organization_phones", "evidence_urls", "retrieved_on", "email_status",
   ];
   const quote = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
   const csv = [columns.join(","), ...emailHandoff.map((row) => columns.map((column) => quote(row[column])).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "csaf_email_handoff.csv";
+  anchor.download = "csaf_unique_email_recipients.csv";
   anchor.click();
   URL.revokeObjectURL(url);
 }

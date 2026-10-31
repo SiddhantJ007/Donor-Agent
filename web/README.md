@@ -22,6 +22,8 @@ npm run build
 
 The generated `src/data/*.json` files are required for the current static build. They include the first 250 ranked person–organization rows with names and scores, any exact name-matched contacts outside those rows, and published email addresses found on organization websites. Keep the repository private if those rows and contacts should not be publicly downloadable.
 
+`npm run data:build` also refreshes the local relationship-level file at `../contact_enrichment/output/csaf_email_handoff.csv` and the deduplicated recipient file at `../contact_enrichment/output/csaf_unique_email_recipients.csv`. The Organizations and People pages download the unique-recipient version.
+
 ## Vercel
 
 Set the project root to `web` and use `npm run build`. The static dashboard does not require a database or runtime API. Vercel uses the JSON files committed to the repository; refresh them locally and redeploy when the pipeline data changes.

@@ -26,6 +26,7 @@ MASTER_ORG_FILE = ROOT / "organizations_master.csv"
 IRS_FILE = ROOT / "irs_latest_donors.csv"
 CONTACT_FILE = ROOT / "contact_enrichment/output/contact_discovery.csv"
 HANDOFF_FILE = ROOT / "contact_enrichment/output/csaf_email_handoff.csv"
+UNIQUE_HANDOFF_FILE = ROOT / "contact_enrichment/output/csaf_unique_email_recipients.csv"
 
 TIERS = [
     "Tier 1 — Platinum: Disclosed Capacity, Established",
@@ -80,18 +81,56 @@ def read_public_contacts() -> tuple[dict[str, list[dict]], list[dict]]:
                 "status": status,
             }
             by_ein[ein].append(contact)
+    email_organizations: dict[str, set[str]] = defaultdict(set)
+    for ein, contacts in by_ein.items():
+        for contact in contacts:
+            email_organizations[contact["email"]].add(ein)
     for contacts in by_ein.values():
+        for contact in contacts:
+            contact["sharedOrganizationCount"] = len(email_organizations[contact["email"]])
         contacts.sort(key=lambda item: (item["type"] != "matched prospect person", item["email"]))
     return by_ein, [contact | {"ein": ein} for ein, contacts in by_ein.items() for contact in contacts]
 
 
-def write_email_handoff(contacts: list[dict], ranked_by_ein: dict[str, dict], org_by_ein: dict[str, dict]) -> list[dict]:
+def contact_scan_summary() -> dict:
+    """Summarize each scanned EIN once, separating no-email outcomes from retries."""
+    if not CONTACT_FILE.exists():
+        return {
+            "contactOrganizationsChecked": 0,
+            "contactOrganizationsWithEmail": 0,
+            "contactSiteCheckedNoEmail": 0,
+            "contactNeedsRetry": 0,
+            "contactRetrievedAt": "",
+        }
+    by_ein: dict[str, list[dict]] = defaultdict(list)
+    retrieved = []
+    with CONTACT_FILE.open(newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            ein = (row.get("ein") or "").strip().replace("-", "").zfill(9)
+            if not ein:
+                continue
+            by_ein[ein].append(row)
+            if row.get("retrieved_on"):
+                retrieved.append(row["retrieved_on"])
+    with_email = {ein for ein, entries in by_ein.items() if any((item.get("email_address") or "").strip() for item in entries)}
+    no_email_statuses = [item.get("status", "") for ein, entries in by_ein.items() if ein not in with_email for item in entries]
+    checked_no_email = sum(status == "site_checked_no_published_email" for status in no_email_statuses)
+    return {
+        "contactOrganizationsChecked": len(by_ein),
+        "contactOrganizationsWithEmail": len(with_email),
+        "contactSiteCheckedNoEmail": checked_no_email,
+        "contactNeedsRetry": max(0, len(by_ein) - len(with_email) - checked_no_email),
+        "contactRetrievedAt": max(retrieved) if retrieved else "",
+    }
+
+
+def write_email_handoff(contacts: list[dict], ranked_by_ein: dict[str, dict], org_by_ein: dict[str, dict]) -> tuple[list[dict], list[dict]]:
     """Write one auditable row per published email, keeping all contacts for review."""
     columns = [
         "organization_best_rank", "ein", "organization_name", "city", "state", "ntee_code",
         "total_revenue", "tax_period_count", "tier_name", "organization_score", "contact_name",
         "contact_type", "email_address", "official_website", "organization_phone", "evidence_url",
-        "retrieved_on", "email_status",
+        "retrieved_on", "email_status", "shared_organization_count",
     ]
     HANDOFF_FILE.parent.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -122,12 +161,49 @@ def write_email_handoff(contacts: list[dict], ranked_by_ein: dict[str, dict], or
             "evidence_url": contact["evidenceUrl"],
             "retrieved_on": contact["retrievedOn"],
             "email_status": contact["status"],
+            "shared_organization_count": contact["sharedOrganizationCount"],
         })
     with HANDOFF_FILE.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
-    return rows
+
+    by_email: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        by_email[row["email_address"].casefold()].append(row)
+    unique_rows = []
+    for email, matches in by_email.items():
+        primary = min(matches, key=lambda row: (number(row["organization_best_rank"], 999999), row["organization_name"].casefold()))
+        assoc = sorted({f'{row["organization_name"]} [{row["ein"]}]' for row in matches})
+        unique_rows.append({
+            "email_address": email,
+            "primary_organization_best_rank": primary["organization_best_rank"],
+            "primary_ein": primary["ein"],
+            "primary_organization_name": primary["organization_name"],
+            "primary_city": primary["city"],
+            "primary_state": primary["state"],
+            "primary_ntee_code": primary["ntee_code"],
+            "primary_total_revenue": primary["total_revenue"],
+            "primary_tax_period_count": primary["tax_period_count"],
+            "primary_tier_name": primary["tier_name"],
+            "primary_organization_score": primary["organization_score"],
+            "associated_organization_count": len(assoc),
+            "associated_organizations": "; ".join(assoc),
+            "contact_names": "; ".join(sorted({row["contact_name"] for row in matches if row["contact_name"]})),
+            "contact_types": "; ".join(sorted({row["contact_type"] for row in matches})),
+            "official_websites": "; ".join(sorted({row["official_website"] for row in matches if row["official_website"]})),
+            "organization_phones": "; ".join(sorted({row["organization_phone"] for row in matches if row["organization_phone"]})),
+            "evidence_urls": "; ".join(sorted({row["evidence_url"] for row in matches if row["evidence_url"]})),
+            "retrieved_on": "; ".join(sorted({row["retrieved_on"] for row in matches if row["retrieved_on"]})),
+            "email_status": primary["email_status"],
+        })
+    unique_rows.sort(key=lambda row: (number(row["primary_organization_best_rank"], 999999), row["primary_organization_name"].casefold(), row["email_address"]))
+    unique_columns = list(unique_rows[0]) if unique_rows else ["email_address"]
+    with UNIQUE_HANDOFF_FILE.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=unique_columns)
+        writer.writeheader()
+        writer.writerows(unique_rows)
+    return rows, unique_rows
 
 
 def main() -> None:
@@ -136,6 +212,7 @@ def main() -> None:
             raise FileNotFoundError(f"Missing pipeline artifact: {path}")
 
     contacts_by_ein, all_contacts = read_public_contacts()
+    contact_scan = contact_scan_summary()
 
     orgs: list[dict] = []
     positive_revenues: list[float] = []
@@ -314,7 +391,7 @@ def main() -> None:
     directory = [{key: row[key] for key in ("ein", "name", "city", "state", "ntee", "macro", "revenue", "periods", "tier", "score", "nyc", "la", "arts", "highCapacity")} | {"contacts": contacts_by_ein.get(row["ein"], [])} for row in target_orgs]
 
     organizations_by_ein = {row["ein"]: row for row in orgs}
-    handoff_rows = write_email_handoff(all_contacts, ranked_by_ein, organizations_by_ein)
+    handoff_rows, unique_recipient_rows = write_email_handoff(all_contacts, ranked_by_ein, organizations_by_ein)
 
     profile_output = []
     colors = ["mint", "blue", "amber", "violet"]
@@ -337,8 +414,11 @@ def main() -> None:
         "peoplePreviewRows": len(people_preview),
         "nycAffiliations": city_affiliations["NYC"], "laAffiliations": city_affiliations["Los Angeles"],
         "revenueCoverage": len(orgs) - missing["revenue"], "nteeCoverage": len(orgs) - missing["ntee"],
-        "publishedEmails": len(all_contacts),
+        "publishedEmails": len(unique_recipient_rows),
+        "emailOrganizationAssociations": len(handoff_rows),
+        "sharedEmailAddresses": sum(row["associated_organization_count"] > 1 for row in unique_recipient_rows),
         "organizationsWithPublishedEmails": len(contacts_by_ein),
+        **contact_scan,
         "matchedProspectEmails": sum(contact["type"] == "matched prospect person" for contact in all_contacts),
         "organizationInboxes": sum(contact["type"] == "organization inbox" for contact in all_contacts),
         "artsOrganizations": macro["A"], "revenueCutoff": cutoff,
@@ -352,9 +432,10 @@ def main() -> None:
     write_json(OUT / "summary.json", summary)
     write_json(OUT / "organization-shortlist.json", directory)
     write_json(OUT / "people-preview.json", people_preview)
-    write_json(OUT / "contact-preview.json", handoff_rows)
-    print(f"Wrote {len(directory):,} organization records and {len(all_contacts):,} published contacts to {OUT}")
-    print(f"Email handoff: {HANDOFF_FILE} ({len(all_contacts):,} one-email-per-row records)")
+    write_json(OUT / "contact-preview.json", unique_recipient_rows)
+    print(f"Wrote {len(directory):,} organization records and {len(all_contacts):,} published organization/contact links to {OUT}")
+    print(f"Email handoff: {HANDOFF_FILE} ({len(handoff_rows):,} organization/contact rows)")
+    print(f"Deduplicated recipients: {UNIQUE_HANDOFF_FILE} ({len(unique_recipient_rows):,} unique addresses)")
     print(f"Organizations: {len(orgs):,}; target affiliations: {target_affiliations:,}; high capacity cutoff: ${cutoff:,.0f}")
 
 

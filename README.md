@@ -17,7 +17,7 @@ npm run data:build
 npm run build
 ```
 
-Review the generated JSON before committing. The dashboard build reads the JSON artifacts and does not need the original CSVs in GitHub or on Vercel. It also refreshes `contact_enrichment/output/csaf_email_handoff.csv` from the local contact discovery file.
+Review the generated JSON before committing. The dashboard build reads the JSON artifacts and does not need the original CSVs in GitHub or on Vercel. It also refreshes the relationship-level and deduplicated email exports in `contact_enrichment/output/` from the local contact discovery file.
 
 ## Local development
 
